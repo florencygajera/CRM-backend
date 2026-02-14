@@ -9,6 +9,12 @@ from app.models.appointment import Appointment, AppointmentStatus
 from app.models.service import Service
 from app.models.appointment_service import AppointmentService
 from app.schemas.appointment import AppointmentCreateIn, AppointmentPatchIn
+from fastapi import BackgroundTasks
+from app.core.config import settings
+from app.integration.email import send_email_smtp
+from app.models.customer import Customer
+from app.workers.tasks import send_booking_email
+from datetime import datetime, timedelta
 
 router = APIRouter(prefix="/appointments")
 
@@ -122,8 +128,13 @@ def create_appointment(
 
     svc_uuids = [uuid.UUID(s) for s in body.service_ids]
     services = db.scalars(
-        select(Service).where(Service.tenant_id == tenant_id, Service.id.in_(svc_uuids), Service.is_active == True)
+        select(Service).where(
+            Service.tenant_id == tenant_id,
+            Service.id.in_(svc_uuids),
+            Service.is_active == True
+        )
     ).all()
+
     if len(services) != len(svc_uuids):
         raise HTTPException(status_code=400, detail="One or more services not found")
 
@@ -146,6 +157,16 @@ def create_appointment(
     db.add(appt)
     db.flush()
 
+   
+
+    reminder_time = datetime.now() + timedelta(minutes=1)
+
+    send_booking_email.apply_async(
+        args=[customer.email, "Test Reminder ⏰", email_body],
+        eta=reminder_time
+)
+
+    # Save service snapshots
     for s in services:
         db.add(
             AppointmentService(
@@ -160,7 +181,52 @@ def create_appointment(
     db.commit()
     db.refresh(appt)
 
-    return {"success": True, "data": {"id": str(appt.id), "start_at": appt.start_at, "end_at": appt.end_at, "status": appt.status}}
+    # Send emails AFTER commit
+    customer = db.scalar(
+        select(Customer).where(Customer.tenant_id == tenant_id, Customer.id == customer_uuid)
+    )
+
+    if customer and customer.email:
+        from datetime import timezone
+
+        subject = "Booking Confirmed ✅"
+        email_body = (
+            f"Your appointment is confirmed.\n"
+            f"Start: {appt.start_at}\n"
+            f"End: {appt.end_at}\n"
+            f"Status: {appt.status}"
+        )
+
+        # 1) confirmation now
+        send_booking_email.delay(customer.email, subject, email_body)
+
+        # 2) reminder 24 hours before
+        reminder_time = appt.start_at - timedelta(hours=24)
+
+        # safer time compare (timezone-aware)
+        now_utc = datetime.now(timezone.utc)
+        if reminder_time.tzinfo is None:
+            # If your datetimes are naive, still schedule (works, but prefer timezone-aware datetimes)
+            send_booking_email.apply_async(
+                args=[customer.email, "Appointment Reminder ⏰", email_body],
+                eta=reminder_time
+            )
+        else:
+            if reminder_time > now_utc:
+                send_booking_email.apply_async(
+                    args=[customer.email, "Appointment Reminder ⏰", email_body],
+                    eta=reminder_time
+                )
+
+    return {
+        "success": True,
+        "data": {
+            "id": str(appt.id),
+            "start_at": appt.start_at,
+            "end_at": appt.end_at,
+            "status": appt.status
+        }
+    }
 
 
 @router.patch("/{appointment_id}")
