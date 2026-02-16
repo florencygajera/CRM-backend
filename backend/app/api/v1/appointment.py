@@ -197,26 +197,24 @@ def create_appointment(
             f"Status: {appt.status}"
         )
 
-        # 1) confirmation now
-        send_booking_email.delay(customer.email, subject, email_body)
+            # Send confirmation now
+    send_booking_email.delay(customer.email, "Booking Confirmed ✅", email_body)
 
-        # 2) reminder 24 hours before
-        reminder_time = appt.start_at - timedelta(hours=24)
+    # Schedule reminder 24 hours before
+    reminder_time = appt.start_at - timedelta(hours=24)
 
-        # safer time compare (timezone-aware)
-        now_utc = datetime.now(timezone.utc)
-        if reminder_time.tzinfo is None:
-            # If your datetimes are naive, still schedule (works, but prefer timezone-aware datetimes)
+    # If your datetimes are naive, we schedule anyway (works). Better is timezone-aware.
+    if reminder_time.tzinfo is None:
+        send_booking_email.apply_async(
+            args=[customer.email, "Appointment Reminder ⏰", email_body],
+            eta=reminder_time
+        )
+    else:
+        if reminder_time > datetime.now(timezone.utc):
             send_booking_email.apply_async(
                 args=[customer.email, "Appointment Reminder ⏰", email_body],
                 eta=reminder_time
             )
-        else:
-            if reminder_time > now_utc:
-                send_booking_email.apply_async(
-                    args=[customer.email, "Appointment Reminder ⏰", email_body],
-                    eta=reminder_time
-                )
 
     return {
         "success": True,

@@ -10,6 +10,8 @@ from app.models.branch import Branch
 from app.models.appointment import Appointment  
 from app.models.appointment_service import AppointmentService 
 from app.models.staff import Staff  
+from app.models.payment import Payment  # noqa: F401
+from app.models.payment_event import PaymentEvent  # noqa: F401
 
 
 app = FastAPI(title=settings.APP_NAME)
