@@ -65,6 +65,18 @@ def create_razorpay_order(
         currency=body.currency,
         provider_order_id=provider_order_id,
     )
+
+    db.add(PaymentEvent(
+        tenant_id=pay.tenant_id,
+        provider=PaymentProvider.RAZORPAY,
+        event_type="order.created",
+        provider_event_id=provider_order_id,  # Use order ID as event ID (no separate event at order creation)
+        provider_payment_id="",  # Payment not yet made
+        provider_order_id=provider_order_id,
+        payload_json=json.dumps(order),  # Store Razorpay order response, not JWT token payload
+    ))
+
+
     db.add(pay)
     db.commit()
     db.refresh(pay)
