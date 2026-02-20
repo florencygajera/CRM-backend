@@ -22,7 +22,10 @@ def get_token_payload(authorization: str = Header(...)) -> dict:
     if not authorization.lower().startswith("bearer "):
         raise HTTPException(status_code=401, detail="Invalid authorization header")
     token = authorization.split(" ", 1)[1].strip()
-    return decode_token(token)
+    try:
+        return decode_token(token)
+    except ValueError as e:
+        raise HTTPException(status_code=401, detail=str(e))
 
 
 def require_roles(*roles: str):

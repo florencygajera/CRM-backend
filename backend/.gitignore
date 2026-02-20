@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Virtual envs
+venv/
+.venv/
+env/
+ENV/
+
+# Local secrets
+.env
+.env.*
+!.env.example
+
+# DB / local artifacts
+*.db
+*.sqlite
+*.sqlite3
+pgdata/
+app/ai/artifacts/
+app/ai_models/artifacts/
+**/artifacts/
+
+# Logs
+*.log
+
+# IDE
+.vscode/
+.idea/

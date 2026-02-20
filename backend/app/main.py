@@ -32,7 +32,7 @@ def root():
 # ✅ CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.CORS_ALLOWED_ORIGINS,
+    allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
     allow_headers=["Authorization", "Content-Type", "X-Branch-Id"],
@@ -47,8 +47,12 @@ app.add_middleware(RequestContextMiddleware)
 
 @app.on_event("startup")
 def startup():
-    # Temporary for local dev: create tables automatically (no Alembic needed right now)
-    Base.metadata.create_all(bind=engine)
+    """
+    In development, we auto-create tables for convenience.
+    In staging/production, prefer Alembic migrations (alembic upgrade head).
+    """
+    if settings.ENV.lower() in {"dev", "development", "local"}:
+        Base.metadata.create_all(bind=engine)
 
 
 @app.get("/health")

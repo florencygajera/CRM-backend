@@ -33,7 +33,10 @@ def login_route(body: LoginIn, db: Session = Depends(get_db)):
 
 @router.post("/refresh", response_model=TokenOut)
 def refresh_route(refresh_token: str, db: Session = Depends(get_db)):
-    payload = decode_token(refresh_token)
+    try:
+        payload = decode_token(refresh_token)
+    except ValueError as e:
+        raise HTTPException(status_code=401, detail=str(e))
     if payload.get("type") != "refresh":
         raise HTTPException(status_code=401, detail="Refresh token required")
 
