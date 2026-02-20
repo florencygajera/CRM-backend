@@ -20,8 +20,17 @@ from app.middlewares.request_context import RequestContextMiddleware
 from sqlalchemy import text
 from app.db.session import engine
 from app.core.config import settings
+from app.ai.router import router as ai_router
 
 app = FastAPI(title="SmartServeAI")
+
+app = FastAPI(title="CRM AI Module")
+
+app.include_router(ai_router)
+
+@app.get("/")
+def root():
+    return {"status": "ok"}
 
 app = FastAPI(title=settings.APP_NAME)
 
