@@ -18,21 +18,16 @@ from app.middlewares.security_headers import SecurityHeadersMiddleware
 from fastapi.middleware.cors import CORSMiddleware
 from app.middlewares.request_context import RequestContextMiddleware
 from sqlalchemy import text
-from app.db.session import engine
-from app.core.config import settings
-from app.ai.router import router as ai_router
+from app.ai_models.router import router as ai_router
 
-app = FastAPI(title="SmartServeAI")
+app = FastAPI(title=settings.APP_NAME)
 
-app = FastAPI(title="CRM AI Module")
-
+# Include AI router
 app.include_router(ai_router)
 
 @app.get("/")
 def root():
     return {"status": "ok"}
-
-app = FastAPI(title=settings.APP_NAME)
 
 # ✅ CORS
 app.add_middleware(
