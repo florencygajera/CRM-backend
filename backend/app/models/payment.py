@@ -3,7 +3,7 @@ from datetime import datetime
 from sqlalchemy import String, DateTime, Numeric, Index, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
-from app.db.base import Base
+from app.db.base_class import Base
 
 class PaymentStatus:
     CREATED = "CREATED"
@@ -12,11 +12,9 @@ class PaymentStatus:
     FAILED = "FAILED"
     REFUNDED = "REFUNDED"
 
-
 class PaymentProvider:
     RAZORPAY = "RAZORPAY"
     STRIPE = "STRIPE"
-
 
 class Payment(Base):
     __tablename__ = "payments"

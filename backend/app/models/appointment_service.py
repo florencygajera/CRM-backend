@@ -2,7 +2,7 @@ import uuid
 from sqlalchemy import Integer, Numeric
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
-from app.db.base import Base
+from app.db.base_class import Base
 
 class AppointmentService(Base):
     __tablename__ = "appointment_services"

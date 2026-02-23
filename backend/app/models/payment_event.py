@@ -4,7 +4,7 @@ from datetime import datetime
 from sqlalchemy import String, DateTime, Index
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.dialects.postgresql import UUID, JSONB
-from app.db.base import Base
+from app.db.base_class import Base
 class PaymentEvent(Base):
     __tablename__ = "payment_events"
 
