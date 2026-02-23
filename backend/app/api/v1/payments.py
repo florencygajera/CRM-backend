@@ -1,6 +1,8 @@
+"""Payment routes: Razorpay order, webhook, verify, refund, list."""
+
 import uuid
+from datetime import datetime, timezone
 from decimal import Decimal
-from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
@@ -27,10 +29,50 @@ from app.schemas.payment import (
     RefundOut,
 )
 
+router = APIRouter()  # prefix set by parent router
 
-router = APIRouter(prefix="/payments", tags=["Payments"])
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+_STATUS_MAP = {
+    "authorized": PaymentStatus.AUTHORIZED,
+    "captured": PaymentStatus.CAPTURED,
+    "failed": PaymentStatus.FAILED,
+    "refunded": PaymentStatus.REFUNDED,
+}
+
+_APPT_STATUS_MAP = {
+    PaymentStatus.CAPTURED: ApptPayStatus.PAID,
+    PaymentStatus.FAILED: ApptPayStatus.FAILED,
+    PaymentStatus.REFUNDED: ApptPayStatus.REFUNDED,
+}
 
 
+def _sync_appointment_payment_status(
+    db: Session,
+    tenant_id: uuid.UUID,
+    appointment_id: uuid.UUID,
+    pay_status: str,
+    *,
+    branch_id: uuid.UUID | None = None,
+) -> None:
+    """Update the appointment's payment_status to match the payment."""
+    filters = [
+        Appointment.tenant_id == tenant_id,
+        Appointment.id == appointment_id,
+    ]
+    if branch_id is not None:
+        filters.append(Appointment.branch_id == branch_id)
+
+    appt = db.scalar(select(Appointment).where(*filters))
+    if appt and pay_status in _APPT_STATUS_MAP:
+        appt.payment_status = _APPT_STATUS_MAP[pay_status]
+
+
+# ---------------------------------------------------------------------------
+# Razorpay: Create Order
+# ---------------------------------------------------------------------------
 @router.post("/razorpay/order", response_model=CreateRazorpayOrderOut)
 def create_razorpay_order(
     body: CreateRazorpayOrderIn,
@@ -38,18 +80,9 @@ def create_razorpay_order(
     payload: dict = Depends(get_token_payload),
     branch_id: uuid.UUID = Depends(get_branch_id),
 ):
-    tenant_id_str = payload.get("tenant_id")
-    if not tenant_id_str:
-        raise HTTPException(status_code=400, detail="Missing tenant_id in token")
-
-    try:
-        tenant_id = uuid.UUID(tenant_id_str)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid tenant_id format")
-
+    tenant_id = uuid.UUID(payload["tenant_id"])
     appt_id = body.appointment_id
 
-    # ✅ Enforce tenant + branch
     appt = db.scalar(
         select(Appointment).where(
             Appointment.tenant_id == tenant_id,
@@ -60,15 +93,13 @@ def create_razorpay_order(
     if not appt:
         raise HTTPException(status_code=404, detail="Appointment not found for this branch")
 
-    # Set due on appointment
     appt.amount_due = body.amount
     appt.currency = body.currency
     appt.payment_status = ApptPayStatus.UNPAID
 
-    # Create Razorpay order
     order = client.order.create(
         {
-            "amount": int(round(float(body.amount) * 100)),  # paisa
+            "amount": int(round(float(body.amount) * 100)),
             "currency": body.currency,
             "receipt": f"appt_{appt_id}",
             "notes": {
@@ -81,10 +112,11 @@ def create_razorpay_order(
     provider_order_id = order["id"]
 
     customer = db.scalar(
-        select(Customer).where(Customer.tenant_id == tenant_id, Customer.id == appt.customer_id)
+        select(Customer).where(
+            Customer.tenant_id == tenant_id, Customer.id == appt.customer_id,
+        )
     )
 
-    # ✅ Create payment row WITH branch_id
     pay = Payment(
         tenant_id=tenant_id,
         branch_id=branch_id,
@@ -96,11 +128,9 @@ def create_razorpay_order(
         provider=PaymentProvider.RAZORPAY,
         provider_order_id=provider_order_id,
     )
-
     db.add(pay)
-    db.flush()  # ensures pay.id is available without commit
+    db.flush()
 
-    # Store event
     db.add(
         PaymentEvent(
             tenant_id=tenant_id,
@@ -134,13 +164,14 @@ def create_razorpay_order(
     }
 
 
+# ---------------------------------------------------------------------------
+# Razorpay: Webhook
+# ---------------------------------------------------------------------------
 @router.post("/razorpay/webhook")
 async def razorpay_webhook(request: Request, db: Session = Depends(get_db)):
     """
-    Webhooks are unauthenticated. We must be extra careful:
-    - Verify signature ✅
-    - Store event idempotently ✅
-    - Resolve payment safely (prefer tenant_id in notes) ✅
+    Unauthenticated webhook receiver — verifies signature, stores the event
+    idempotently, and updates payment / appointment status.
     """
     raw = await request.body()
     sig = request.headers.get("X-Razorpay-Signature", "")
@@ -153,29 +184,23 @@ async def razorpay_webhook(request: Request, db: Session = Depends(get_db)):
     payload_json = await request.json()
     event_type = payload_json.get("event", "")
 
-    payment_entity = ((payload_json.get("payload") or {}).get("payment") or {}).get("entity") or {}
-    order_entity = ((payload_json.get("payload") or {}).get("order") or {}).get("entity") or {}
-    refund_entity = ((payload_json.get("payload") or {}).get("refund") or {}).get("entity") or {}
+    nested = payload_json.get("payload") or {}
+    payment_entity = (nested.get("payment") or {}).get("entity") or {}
+    order_entity = (nested.get("order") or {}).get("entity") or {}
+    refund_entity = (nested.get("refund") or {}).get("entity") or {}
 
-    # event_id: payment.id or order.id or refund.id
     event_id = (
         payment_entity.get("id")
         or order_entity.get("id")
         or refund_entity.get("id")
-        or None
     )
-
     provider_order_id = (
         payment_entity.get("order_id")
         or order_entity.get("id")
         or refund_entity.get("order_id")
         or ""
     )
-    provider_payment_id = (
-        payment_entity.get("id")
-        or refund_entity.get("payment_id")
-        or ""
-    )
+    provider_payment_id = payment_entity.get("id") or refund_entity.get("payment_id") or ""
     status = (
         payment_entity.get("status")
         or order_entity.get("status")
@@ -186,30 +211,28 @@ async def razorpay_webhook(request: Request, db: Session = Depends(get_db)):
     notes = payment_entity.get("notes") or order_entity.get("notes") or {}
     tenant_id_str = notes.get("tenant_id")
 
+    # Resolve payment row (tenant-scoped first, fallback to global)
     pay = None
-
-    # ✅ Prefer tenant-scoped lookup
     if tenant_id_str and provider_order_id:
         try:
-            tenant_uuid = uuid.UUID(tenant_id_str)
             pay = db.scalar(
                 select(Payment).where(
-                    Payment.tenant_id == tenant_uuid,
+                    Payment.tenant_id == uuid.UUID(tenant_id_str),
                     Payment.provider_order_id == provider_order_id,
                 )
             )
         except Exception:
-            pay = None
+            pass
 
-    # Fallback: provider_order_id only (less safe, but allows webhook recovery)
     if not pay and provider_order_id:
-        pay = db.scalar(select(Payment).where(Payment.provider_order_id == provider_order_id))
+        pay = db.scalar(
+            select(Payment).where(Payment.provider_order_id == provider_order_id)
+        )
 
     if not pay:
-        # accept webhook but do nothing
         return {"success": True}
 
-    # ✅ Idempotency check (per tenant)
+    # Idempotency
     if event_id:
         existing = db.scalar(
             select(PaymentEvent).where(
@@ -220,7 +243,6 @@ async def razorpay_webhook(request: Request, db: Session = Depends(get_db)):
         if existing:
             return {"success": True}
 
-    # Store webhook event
     db.add(
         PaymentEvent(
             tenant_id=pay.tenant_id,
@@ -233,38 +255,21 @@ async def razorpay_webhook(request: Request, db: Session = Depends(get_db)):
         )
     )
 
-    # Update Payment status
-    if status == "authorized":
-        pay.status = PaymentStatus.AUTHORIZED
-    elif status == "captured":
-        pay.status = PaymentStatus.CAPTURED
-    elif status == "failed":
-        pay.status = PaymentStatus.FAILED
-    elif status == "refunded":
-        pay.status = PaymentStatus.REFUNDED
+    if status in _STATUS_MAP:
+        pay.status = _STATUS_MAP[status]
 
     if provider_payment_id:
         pay.provider_payment_id = provider_payment_id
 
-    # Update Appointment payment_status
-    appt = db.scalar(
-        select(Appointment).where(
-            Appointment.tenant_id == pay.tenant_id,
-            Appointment.id == pay.appointment_id,
-        )
-    )
-    if appt:
-        if pay.status == PaymentStatus.CAPTURED:
-            appt.payment_status = ApptPayStatus.PAID
-        elif pay.status == PaymentStatus.FAILED:
-            appt.payment_status = ApptPayStatus.FAILED
-        elif pay.status == PaymentStatus.REFUNDED:
-            appt.payment_status = ApptPayStatus.REFUNDED
+    _sync_appointment_payment_status(db, pay.tenant_id, pay.appointment_id, pay.status)
 
     db.commit()
     return {"success": True}
 
 
+# ---------------------------------------------------------------------------
+# Razorpay: Verify Checkout
+# ---------------------------------------------------------------------------
 @router.post("/razorpay/verify", response_model=RazorpayVerifyOut)
 def razorpay_verify(
     body: RazorpayVerifyIn,
@@ -274,7 +279,6 @@ def razorpay_verify(
 ):
     tenant_id = uuid.UUID(payload["tenant_id"])
 
-    # ✅ tenant + branch filter
     pay = db.scalar(
         select(Payment).where(
             Payment.id == body.payment_id,
@@ -285,23 +289,20 @@ def razorpay_verify(
     if not pay:
         raise HTTPException(status_code=404, detail="Payment not found for this branch")
 
-    # Idempotency: already captured -> success
     if pay.status == PaymentStatus.CAPTURED:
         return {"success": True, "payment_status": pay.status}
 
     if pay.provider_order_id != body.razorpay_order_id:
         raise HTTPException(status_code=400, detail="Order ID mismatch")
 
-    ok = verify_razorpay_checkout_signature(
+    if not verify_razorpay_checkout_signature(
         order_id=body.razorpay_order_id,
         payment_id=body.razorpay_payment_id,
         signature=body.razorpay_signature,
         key_secret=settings.RAZORPAY_KEY_SECRET,
-    )
-    if not ok:
+    ):
         raise HTTPException(status_code=400, detail="Invalid signature")
 
-    # Fetch payment from Razorpay
     rp_payment = client.payment.fetch(body.razorpay_payment_id)
     rp_status = rp_payment.get("status", "")
     rp_amount_paisa = int(rp_payment.get("amount", 0))
@@ -314,27 +315,12 @@ def razorpay_verify(
         raise HTTPException(status_code=400, detail="Amount mismatch")
 
     pay.provider_payment_id = body.razorpay_payment_id
-    if rp_status == "captured":
-        pay.status = PaymentStatus.CAPTURED
-    elif rp_status == "authorized":
-        pay.status = PaymentStatus.AUTHORIZED
-    elif rp_status == "failed":
-        pay.status = PaymentStatus.FAILED
-    else:
-        pay.status = PaymentStatus.FAILED
+    pay.status = _STATUS_MAP.get(rp_status, PaymentStatus.FAILED)
 
-    # Update appointment status (tenant + branch)
-    appt = db.scalar(
-        select(Appointment).where(
-            Appointment.tenant_id == tenant_id,
-            Appointment.branch_id == branch_id,
-            Appointment.id == pay.appointment_id,
-        )
+    _sync_appointment_payment_status(
+        db, tenant_id, pay.appointment_id, pay.status, branch_id=branch_id,
     )
-    if appt and pay.status == PaymentStatus.CAPTURED:
-        appt.payment_status = ApptPayStatus.PAID
 
-    # Log event (use payment id as provider_event_id for uniqueness)
     db.add(
         PaymentEvent(
             tenant_id=tenant_id,
@@ -347,19 +333,24 @@ def razorpay_verify(
         )
     )
 
-    # Receipt + email async (idempotent)
-    if pay.status == PaymentStatus.CAPTURED and getattr(pay, "receipt_sent_at", None) is None:
+    # Receipt + email (idempotent)
+    if pay.status == PaymentStatus.CAPTURED and pay.receipt_sent_at is None:
+        appt = db.scalar(
+            select(Appointment).where(
+                Appointment.tenant_id == tenant_id,
+                Appointment.id == pay.appointment_id,
+            )
+        )
         customer = None
         if appt:
             customer = db.scalar(
                 select(Customer).where(
-                    Customer.tenant_id == tenant_id,
-                    Customer.id == appt.customer_id,
+                    Customer.tenant_id == tenant_id, Customer.id == appt.customer_id,
                 )
             )
 
         from app.services.receipt_service import generate_receipt_pdf
-        from app.workers.tasks import send_email  # celery task
+        from app.workers.tasks import send_email
 
         pdf_bytes = generate_receipt_pdf(
             receipt_no=str(pay.id),
@@ -367,7 +358,6 @@ def razorpay_verify(
             amount=float(pay.amount),
             currency=pay.currency,
         )
-
         send_email.delay(
             to_email=(customer.email if customer and customer.email else "fallback@email.com"),
             subject="Payment Receipt",
@@ -375,13 +365,15 @@ def razorpay_verify(
             attachment_bytes=pdf_bytes,
             attachment_name=f"receipt_{pay.id}.pdf",
         )
-
-        pay.receipt_sent_at = datetime.utcnow()
+        pay.receipt_sent_at = datetime.now(timezone.utc)
 
     db.commit()
     return {"success": True, "payment_status": pay.status}
 
 
+# ---------------------------------------------------------------------------
+# Razorpay: Refund
+# ---------------------------------------------------------------------------
 @router.post(
     "/razorpay/refund",
     response_model=RefundOut,
@@ -395,7 +387,6 @@ def razorpay_refund(
 ):
     tenant_id = uuid.UUID(payload["tenant_id"])
 
-    # ✅ tenant + branch filter
     pay = db.scalar(
         select(Payment).where(
             Payment.id == body.payment_id,
@@ -405,17 +396,13 @@ def razorpay_refund(
     )
     if not pay:
         raise HTTPException(status_code=404, detail="Payment not found for this branch")
-
     if pay.provider != PaymentProvider.RAZORPAY:
         raise HTTPException(status_code=400, detail="Not a Razorpay payment")
-
     if not pay.provider_payment_id:
         raise HTTPException(status_code=400, detail="Missing provider_payment_id")
-
     if pay.status != PaymentStatus.CAPTURED:
         raise HTTPException(status_code=400, detail="Only CAPTURED payments can be refunded")
-
-    if getattr(pay, "refund_id", None) and getattr(pay, "refund_status", None) == "processed":
+    if pay.refund_id and pay.refund_status == "processed":
         raise HTTPException(status_code=400, detail="Payment already refunded")
 
     refund_payload = {}
@@ -427,20 +414,13 @@ def razorpay_refund(
     refund = client.payment.refund(pay.provider_payment_id, refund_payload)
 
     pay.refund_id = refund.get("id")
-    pay.refund_status = refund.get("status")  # "processed" or "pending"
+    pay.refund_status = refund.get("status")
 
-    # Only mark REFUNDED if processed now (else webhook will update)
     if pay.refund_status == "processed":
         pay.status = PaymentStatus.REFUNDED
-        appt = db.scalar(
-            select(Appointment).where(
-                Appointment.tenant_id == tenant_id,
-                Appointment.branch_id == branch_id,
-                Appointment.id == pay.appointment_id,
-            )
+        _sync_appointment_payment_status(
+            db, tenant_id, pay.appointment_id, pay.status, branch_id=branch_id,
         )
-        if appt:
-            appt.payment_status = ApptPayStatus.REFUNDED
 
     db.add(
         PaymentEvent(
@@ -463,6 +443,9 @@ def razorpay_refund(
     }
 
 
+# ---------------------------------------------------------------------------
+# List payments
+# ---------------------------------------------------------------------------
 @router.get("/")
 def list_payments(
     db: Session = Depends(get_db),

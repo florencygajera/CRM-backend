@@ -1,9 +1,9 @@
-import os
-import razorpay
-from dotenv import load_dotenv
+"""Singleton Razorpay client initialised from application settings."""
 
-load_dotenv()
+import razorpay
+
+from app.core.config import settings
 
 client = razorpay.Client(
-    auth=(os.getenv("RAZORPAY_KEY_ID"), os.getenv("RAZORPAY_KEY_SECRET"))
+    auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET),
 )
