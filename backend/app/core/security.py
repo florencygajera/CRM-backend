@@ -9,7 +9,6 @@ from datetime import datetime, timedelta, timezone
 
 from jose import jwt, JWTError, ExpiredSignatureError
 from passlib.context import CryptContext
-
 from app.core.config import settings
 from passlib.context import CryptContext
 
@@ -23,7 +22,8 @@ _pwd_ctx = CryptContext(
 _pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 ALGORITHM = "HS256"
-
+print("JWT_SECRET loaded? len =", len(settings.JWT_SECRET or ""))
+print("JWT_ALGO =", getattr(settings, "JWT_ALG", "HS256"))
 
 from fastapi import HTTPException
 

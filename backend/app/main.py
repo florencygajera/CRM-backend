@@ -17,6 +17,9 @@ from app.middlewares.security_headers import SecurityHeadersMiddleware
 from app.middlewares.request_context import RequestContextMiddleware
 
 
+print("JWT_SECRET len =", len(settings.JWT_SECRET or ""))
+print("JWT_SECRET preview =", (settings.JWT_SECRET or "")[:6])
+
 # ---------------------------------------------------------------------------
 # Lifespan (replaces deprecated @app.on_event)
 # ---------------------------------------------------------------------------

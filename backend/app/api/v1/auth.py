@@ -15,7 +15,10 @@ from app.services.auth_service import register_tenant, login, AuthError
 
 router = APIRouter()  # prefix set by parent router
 
-
+@router.get("/me")
+def me(payload: dict = Depends(get_token_payload)):
+    return payload
+    
 @router.post("/register-tenant", response_model=TokenOut)
 def register_tenant_route(body: RegisterTenantIn, db: Session = Depends(get_db)):
     try:

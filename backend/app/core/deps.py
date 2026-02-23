@@ -26,6 +26,7 @@ def get_db() -> Generator[Session, None, None]:
 
 
 def get_token_payload(authorization: str = Header(...)) -> dict:
+    token = authorization.split(" ", 1)[1].strip()
     """Extract and decode the JWT from the Authorization header."""
     if not authorization.lower().startswith("bearer "):
         raise HTTPException(status_code=401, detail="Invalid authorization header")
