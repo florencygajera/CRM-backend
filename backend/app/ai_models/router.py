@@ -1,8 +1,5 @@
 import os
-from fastapi import APIRouter, HTTPException, Query, Depends
-
-from app.core.deps import require_roles
-from app.models.user import UserRole
+from fastapi import APIRouter, HTTPException, Query
 
 from .schemas import (
     RevenueTrainRequest, RevenueForecastResponse,
@@ -19,7 +16,7 @@ router = APIRouter(prefix="/api/v1/ai", tags=["AI"])
 # ----------------------
 # Revenue Forecasting
 # ----------------------
-@router.post("/revenue/train", response_model=RevenueForecastResponse, dependencies=[Depends(require_roles(UserRole.OWNER))])
+@router.post("/revenue/train", response_model=RevenueForecastResponse)
 def revenue_train(req: RevenueTrainRequest):
     try:
         if not os.path.exists(req.csv_path):
@@ -34,7 +31,7 @@ def revenue_train(req: RevenueTrainRequest):
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.get("/revenue/forecast/latest", response_model=RevenueForecastResponse, dependencies=[Depends(require_roles(UserRole.OWNER, UserRole.MANAGER))])
+@router.get("/revenue/forecast/latest", response_model=RevenueForecastResponse)
 def revenue_latest():
     try:
         payload = load_json(REVENUE_FORECAST_PATH)
@@ -46,7 +43,7 @@ def revenue_latest():
 # ----------------------
 # Churn Prediction
 # ----------------------
-@router.post("/churn/train", dependencies=[Depends(require_roles(UserRole.OWNER))])
+@router.post("/churn/train")
 def churn_train(req: ChurnTrainRequest):
     try:
         if not os.path.exists(req.csv_path):
@@ -60,7 +57,7 @@ def churn_train(req: ChurnTrainRequest):
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.get("/churn/score/{customer_id}", response_model=ChurnScoreResponse, dependencies=[Depends(require_roles(UserRole.OWNER, UserRole.MANAGER))])
+@router.get("/churn/score/{customer_id}", response_model=ChurnScoreResponse)
 def churn_score_customer(
     customer_id: int,
     threshold: float = Query(0.7, ge=0.0, le=1.0),
@@ -83,7 +80,7 @@ def churn_score_customer(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.get("/churn/high-risk", dependencies=[Depends(require_roles(UserRole.OWNER, UserRole.MANAGER))])
+@router.get("/churn/high-risk")
 def churn_high_risk(threshold: float = Query(0.7, ge=0.0, le=1.0)):
     """
     Demo endpoint: in real CRM, query all customers, compute features, score each, filter prob > threshold.

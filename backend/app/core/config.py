@@ -67,7 +67,7 @@ class Settings(BaseSettings):
 
     CORS_ALLOWED_ORIGINS: str = '["http://localhost:5173"]'
 
-    JWT_SECRET: str = "change_me"
+    JWT_SECRET: str 
     JWT_ACCESS_MINUTES: int = 30
     JWT_REFRESH_DAYS: int = 14
 

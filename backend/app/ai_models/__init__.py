@@ -1,1 +1,1 @@
-# AI Models package
+# AI Models module
