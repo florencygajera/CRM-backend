@@ -446,7 +446,7 @@ def razorpay_refund(
 # ---------------------------------------------------------------------------
 # List payments
 # ---------------------------------------------------------------------------
-@router.get("/")
+@router.get("")
 def list_payments(
     db: Session = Depends(get_db),
     payload: dict = Depends(get_token_payload),

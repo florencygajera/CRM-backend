@@ -287,7 +287,7 @@ def patch_appointment(
     }
 
 
-@router.get("/")
+@router.get("")
 def list_appointments(
     db: Session = Depends(get_db),
     payload: dict = Depends(get_token_payload),

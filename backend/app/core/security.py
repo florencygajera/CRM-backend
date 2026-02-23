@@ -11,7 +11,12 @@ from jose import jwt, JWTError, ExpiredSignatureError
 from passlib.context import CryptContext
 
 from app.core.config import settings
+from passlib.context import CryptContext
 
+_pwd_ctx = CryptContext(
+    schemes=["argon2", "bcrypt"],
+    deprecated="auto"
+)
 # ---------------------------------------------------------------------------
 # Password hashing (bcrypt)
 # ---------------------------------------------------------------------------
@@ -20,17 +25,19 @@ _pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
 ALGORITHM = "HS256"
 
 
-def hash_password(password: str) -> str:
-    """
-    Hash a plain-text password using bcrypt.
+from fastapi import HTTPException
 
-    Raises:
-        ValueError: If *password* is empty or shorter than 8 characters.
-    """
-    if not password:
-        raise ValueError("Password cannot be empty")
-    if len(password) < 8:
-        raise ValueError("Password must be at least 8 characters long")
+def hash_password(password: str) -> str:
+    if password is None:
+        raise HTTPException(status_code=400, detail="Password is required")
+
+    # bcrypt limit: 72 bytes
+    if len(password.encode("utf-8")) > 72:
+        raise HTTPException(
+            status_code=400,
+            detail="Password too long. Must be 72 bytes or less."
+        )
+
     return _pwd_ctx.hash(password)
 
 
