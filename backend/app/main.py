@@ -16,6 +16,11 @@ from app.middlewares.rate_limit import RateLimitMiddleware, RateLimitRule
 from app.middlewares.security_headers import SecurityHeadersMiddleware
 from app.middlewares.request_context import RequestContextMiddleware
 
+origins = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
+
 
 print("JWT_SECRET len =", len(settings.JWT_SECRET or ""))
 print("JWT_SECRET preview =", (settings.JWT_SECRET or "")[:6])
@@ -45,6 +50,8 @@ app.include_router(api_router, prefix="/api/v1")
 
 
 # ── Middleware (outermost first) ──────────────────────────────────────────
+# ── Middleware (outermost first) ──────────────────────────────────────────
+
 app.add_middleware(RequestContextMiddleware)
 
 app.add_middleware(
@@ -54,14 +61,17 @@ app.add_middleware(
 
 app.add_middleware(SecurityHeadersMiddleware)
 
+# ✅ FIXED CORS (handles OPTIONS + all headers)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins,
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ],
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
-    allow_headers=["Authorization", "Content-Type", "X-Branch-Id"],
+    allow_methods=["*"],   # allows OPTIONS automatically
+    allow_headers=["*"],   # allows all headers (Accept, Authorization, etc.)
 )
-
 
 # ── Health-check endpoints ───────────────────────────────────────────────
 @app.get("/")
