@@ -5,21 +5,23 @@ info:
 config:
   proxy:
     inherit: true
-    config:
-      protocol: http
-      hostname: ""
-      port: ""
-      auth:
-        username: ""
-        password: ""
-      bypassProxy: ""
+    # Proxy configuration removed - empty values detected
+    # To enable proxy, provide actual values:
+    # config:
+    #   protocol: http
+    #   hostname: "proxy.example.com"
+    #   port: "8080"
+    #   auth:
+    #     username: "user"
+    #     password: "password"
+    #   bypassProxy: false
 
 request:
   auth:
     type: bearer
-bundled: false
-extensions:
-  bruno:
-    ignore:
-      - node_modules
-      - .git
+  bundled: false
+  extensions:
+    bruno:
+      ignore:
+        - node_modules
+        - .git
